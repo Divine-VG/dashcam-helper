@@ -1,50 +1,56 @@
 import math
 
-
 class Tracker:
     def __init__(self):
-        # Store the center positions of the objects
-        self.center_points = {}
-        # Keep the count of the IDs
-        # each time a new object id detected, the count will increase by one
-        self.id_count = 0
+        self.center_points, self.id_count, self.disappeared, self.max_disappeared = {}, 0, {}, 10
 
+    def register(self, cx, cy):
+        self.center_points[self.id_count] = (cx, cy)
+        self.disappeared[self.id_count] = 0
+        self.id_count += 1
+
+    def deregister(self, object_id):
+        del self.center_points[object_id]; del self.disappeared[object_id]
 
     def update(self, objects_rect):
-        # Objects boxes and ids
         objects_bbs_ids = []
+        input_centroids = [((r[0]+r[2])//2, (r[1]+r[3])//2, r) for r in objects_rect]
 
-        # Get center point of new object
-        for rect in objects_rect:
-            x, y, w, h = rect
-            cx = (x + x + w) // 2
-            cy = (y + y + h) // 2
+        if not self.center_points:
+            for cx, cy, r in input_centroids:
+                self.register(cx, cy)
+                objects_bbs_ids.append([*r, self.id_count - 1])
+            return objects_bbs_ids
 
-            # Find out if that object was detected already
-            same_object_detected = False
-            for id, pt in self.center_points.items():
-                dist = math.hypot(cx - pt[0], cy - pt[1])
+        object_ids = list(self.center_points.keys())
+        if not input_centroids:
+            for oid in object_ids:
+                self.disappeared[oid] += 1
+                if self.disappeared[oid] > self.max_disappeared: self.deregister(oid)
+            return objects_bbs_ids
 
-                if dist < 35:
-                    self.center_points[id] = (cx, cy)
-#                    print(self.center_points)
-                    objects_bbs_ids.append([x, y, w, h, id])
-                    same_object_detected = True
-                    break
+        distances = []
+        for i, (cx, cy, _) in enumerate(input_centroids):
+            for oid in object_ids:
+                d = math.hypot(cx - self.center_points[oid][0], cy - self.center_points[oid][1])
+                if d < 80: distances.append((d, i, oid))
 
-            # New object is detected we assign the ID to that object
-            if same_object_detected is False:
-                self.center_points[self.id_count] = (cx, cy)
-                objects_bbs_ids.append([x, y, w, h, self.id_count])
-                self.id_count += 1
+        distances.sort()
+        used_rows, used_cols = set(), set()
+        for d, r, c in distances:
+            if r in used_rows or c in used_cols: continue
+            self.center_points[c] = input_centroids[r][:2]
+            self.disappeared[c] = 0
+            objects_bbs_ids.append([*input_centroids[r][2], c])
+            used_rows.add(r); used_cols.add(c)
 
-        # Clean the dictionary by center points to remove IDS not used anymore
-        new_center_points = {}
-        for obj_bb_id in objects_bbs_ids:
-            _, _, _, _, object_id = obj_bb_id
-            center = self.center_points[object_id]
-            new_center_points[object_id] = center
+        for r in range(len(input_centroids)):
+            if r not in used_rows:
+                self.register(*input_centroids[r][:2])
+                objects_bbs_ids.append([*input_centroids[r][2], self.id_count - 1])
 
-        # Update dictionary with IDs not used removed
-        self.center_points = new_center_points.copy()
+        for oid in object_ids:
+            if oid not in used_cols:
+                self.disappeared[oid] += 1
+                if self.disappeared[oid] > self.max_disappeared: self.deregister(oid)
         return objects_bbs_ids
